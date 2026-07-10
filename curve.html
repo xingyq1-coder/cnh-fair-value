@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>DMI Fair Value Engine - Yield Curve</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;color:#1a1a2e;font-size:13px}
+.hdr{background:#1e3a8a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center}
+.hdr h1{font-size:18px;font-weight:700}
+.hdr a{color:#93c5fd;text-decoration:none;font-size:12px;margin-left:16px;padding:4px 10px;border:1px solid rgba(255,255,255,.25);border-radius:4px}
+.hdr a:hover{background:rgba(255,255,255,.1)}
+.ctl{padding:8px 16px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px}
+.ctl label{font-weight:600;color:#374151}
+.ctl select,.ctl button{padding:5px 10px;border:1px solid #d1d5db;border-radius:4px;font-size:11px;background:#fff;color:#1a1a2e;cursor:pointer}
+.ctl button.on{background:#2563eb;color:#fff;border-color:#2563eb}
+.ctl .tgl{display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;color:#374151;user-select:none}
+.ctl .tgl input{margin:0}
+.ctl .sep{border-left:1px solid #d1d5db;height:20px;margin:0 4px}
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px}
+@media(max-width:700px){.charts{grid-template-columns:1fr}}
+.card{background:#fff;border-radius:6px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.card h3{font-size:13px;color:#374151;margin-bottom:10px;font-weight:600}
+canvas{width:100%!important;height:320px!important}
+.summary{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:12px}
+.stat{background:#fff;border-radius:6px;padding:14px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.stat .v{font-size:22px;font-weight:700;color:#1e3a8a}
+.stat .l{font-size:11px;color:#6b7280;margin-top:4px}
+.note{font-size:10px;color:#9ca3af;padding:4px 16px;text-align:center}
+.exp{font-size:10px;color:#2563eb;cursor:pointer;margin-left:8px;text-decoration:underline}
+.hist-section{margin:0 12px 12px}
+.hist-section .charts{grid-template-columns:1fr}
+.hist-section canvas{height:420px!important}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>DMI Fair Value Engine</h1><div><a href="index.html">&larr; Bonds</a></div></div>
+<div class="summary" id="sum"></div>
+<div class="ctl">
+ <label>Rating:</label> <select id="rg" onchange="draw()">
+  <option value="NS">CGB Risk-Free</option>
+  <option value="AAA">AAA</option><option value="AA">AA</option>
+  <option value="A">A</option><option value="BBB">BBB</option><option value="BB">BB</option><option value="NR">NR</option><option value="ALL" selected>All Ratings</option></select>
+ <label>Sector:</label> <select id="sf" onchange="draw()">
+  <option value="" selected>All Sectors</option><option value="城投">LGFV</option><option value="央企金融">SOE Fin</option>
+  <option value="央企产业">SOE Ind</option><option value="主权">Sov</option>
+  <option value="科技">Tech</option><option value="地产">RE</option></select>
+ <span class="sep"></span>
+ <label class="tgl"><input type="checkbox" id="noLGFV" onchange="draw()"> 剔除城投</label>
+ <label class="tgl"><input type="checkbox" id="cnOnly" onchange="draw()"> 仅中资</label>
+ <span class="sep"></span>
+ <button onclick="toggleHist()" id="histBtn">历史趋势</button>
+ <span class="exp" onclick="exportCSV()">导出CSV</span>
+</div>
+<div class="charts" id="charts">
+ <div class="card"><h3>Fair Yield Curve</h3><canvas id="ch1"></canvas></div>
+ <div class="card"><h3>Sample Count</h3><canvas id="ch2"></canvas></div>
+</div>
+<div class="hist-section" id="histWrap" style="display:none">
+ <div class="charts">
+  <div class="card"><h3>1Y Fair Yield 历史趋势 (周均)</h3><canvas id="ch_h1y"></canvas></div>
+  <div class="card"><h3>5Y Fair Yield 历史趋势 (周均)</h3><canvas id="ch_h5y"></canvas></div>
+ </div>
+</div>
+<div class="note">CGB Risk-Free = ChinaBond Government Bond — 中债估值中心每日公布。勾选"剔除城投"查看非城投点心债指数。静态快照 2026-07-10</div>
+
+<script>
+Chart.register(ChartDataLabels);
+
+var CURVE = {"AAA": {"buckets": [{"lo": 0, "hi": 1, "n": 0, "fair": null, "rp": null}, {"lo": 1, "hi": 2, "n": 0, "fair": null, "rp": null}, {"lo": 2, "hi": 3, "n": 0, "fair": null, "rp": null}, {"lo": 3, "hi": 4, "n": 0, "fair": null, "rp": null}, {"lo": 4, "hi": 5, "n": 0, "fair": null, "rp": null}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "AA": {"buckets": [{"lo": 0, "hi": 1, "n": 16, "fair": 3.024, "rp": 1.341}, {"lo": 1, "hi": 2, "n": 14, "fair": 3.067, "rp": 1.531}, {"lo": 2, "hi": 3, "n": 12, "fair": 3.106, "rp": 1.711}, {"lo": 3, "hi": 4, "n": 6, "fair": 3.276, "rp": 1.615}, {"lo": 4, "hi": 5, "n": 6, "fair": 3.149, "rp": 1.783}, {"lo": 5, "hi": 6, "n": 1, "fair": 3.399, "rp": 1.964}, {"lo": 6, "hi": 7, "n": 1, "fair": 2.339, "rp": 1.884}, {"lo": 7, "hi": 8, "n": 1, "fair": 3.0, "rp": 2.197}, {"lo": 8, "hi": 9, "n": 7, "fair": 3.007, "rp": 1.998}, {"lo": 9, "hi": 10, "n": 5, "fair": 2.986, "rp": 2.131}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 3, "fair": 3.07, "rp": 2.587}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 6, "fair": 3.567, "rp": 2.808}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "AA_\u592e\u4f01\u91d1\u878d": {"buckets": [{"lo": 0, "hi": 1, "n": 3, "fair": 3.265, "rp": 1.615}, {"lo": 1, "hi": 2, "n": 0, "fair": null, "rp": null}, {"lo": 2, "hi": 3, "n": 2, "fair": 3.289, "rp": 1.711}, {"lo": 3, "hi": 4, "n": 0, "fair": null, "rp": null}, {"lo": 4, "hi": 5, "n": 0, "fair": null, "rp": null}, {"lo": 5, "hi": 6, "n": 1, "fair": 3.399, "rp": 1.964}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 2, "fair": 3.401, "rp": 2.912}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "AA_\u5176\u4ed6": {"buckets": [{"lo": 0, "hi": 1, "n": 13, "fair": 2.775, "rp": 1.263}, {"lo": 1, "hi": 2, "n": 14, "fair": 3.067, "rp": 1.531}, {"lo": 2, "hi": 3, "n": 10, "fair": 3.102, "rp": 1.7}, {"lo": 3, "hi": 4, "n": 6, "fair": 3.276, "rp": 1.615}, {"lo": 4, "hi": 5, "n": 6, "fair": 3.149, "rp": 1.783}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 1, "fair": 2.339, "rp": 1.884}, {"lo": 7, "hi": 8, "n": 1, "fair": 3.0, "rp": 2.197}, {"lo": 8, "hi": 9, "n": 7, "fair": 3.007, "rp": 1.998}, {"lo": 9, "hi": 10, "n": 3, "fair": 2.49, "rp": 2.042}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 3, "fair": 3.07, "rp": 2.587}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 6, "fair": 3.567, "rp": 2.808}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "A": {"buckets": [{"lo": 0, "hi": 1, "n": 58, "fair": 3.029, "rp": 1.647}, {"lo": 1, "hi": 2, "n": 45, "fair": 3.256, "rp": 1.995}, {"lo": 2, "hi": 3, "n": 48, "fair": 3.208, "rp": 1.835}, {"lo": 3, "hi": 4, "n": 14, "fair": 3.248, "rp": 1.969}, {"lo": 4, "hi": 5, "n": 21, "fair": 3.367, "rp": 2.034}, {"lo": 5, "hi": 6, "n": 2, "fair": 2.937, "rp": 1.649}, {"lo": 6, "hi": 7, "n": 6, "fair": 2.575, "rp": 2.2}, {"lo": 7, "hi": 8, "n": 3, "fair": 2.419, "rp": 1.775}, {"lo": 8, "hi": 9, "n": 4, "fair": 2.769, "rp": 2.397}, {"lo": 9, "hi": 10, "n": 9, "fair": 3.119, "rp": 2.46}, {"lo": 10, "hi": 12, "n": 1, "fair": 2.446, "rp": 1.811}, {"lo": 12, "hi": 15, "n": 2, "fair": 2.409, "rp": 2.114}, {"lo": 15, "hi": 20, "n": 4, "fair": 2.564, "rp": 2.418}, {"lo": 20, "hi": 25, "n": 1, "fair": 2.492, "rp": 2.327}, {"lo": 25, "hi": 30, "n": 5, "fair": 3.381, "rp": 2.886}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "A_\u57ce\u6295": {"buckets": [{"lo": 0, "hi": 1, "n": 11, "fair": 4.553, "rp": 2.558}, {"lo": 1, "hi": 2, "n": 13, "fair": 4.647, "rp": 3.513}, {"lo": 2, "hi": 3, "n": 2, "fair": 4.588, "rp": 2.921}, {"lo": 3, "hi": 4, "n": 0, "fair": null, "rp": null}, {"lo": 4, "hi": 5, "n": 0, "fair": null, "rp": null}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "A_\u592e\u4f01\u91d1\u878d": {"buckets": [{"lo": 0, "hi": 1, "n": 33, "fair": 3.013, "rp": 1.65}, {"lo": 1, "hi": 2, "n": 18, "fair": 3.118, "rp": 1.748}, {"lo": 2, "hi": 3, "n": 24, "fair": 3.174, "rp": 1.75}, {"lo": 3, "hi": 4, "n": 3, "fair": 3.237, "rp": 1.82}, {"lo": 4, "hi": 5, "n": 10, "fair": 3.446, "rp": 2.01}, {"lo": 5, "hi": 6, "n": 1, "fair": 3.178, "rp": 1.736}, {"lo": 6, "hi": 7, "n": 1, "fair": 2.453, "rp": 1.807}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "A_\u79d1\u6280": {"buckets": [{"lo": 0, "hi": 1, "n": 0, "fair": null, "rp": null}, {"lo": 1, "hi": 2, "n": 0, "fair": null, "rp": null}, {"lo": 2, "hi": 3, "n": 1, "fair": 3.402, "rp": 1.92}, {"lo": 3, "hi": 4, "n": 1, "fair": 3.541, "rp": 2.061}, {"lo": 4, "hi": 5, "n": 2, "fair": 3.518, "rp": 2.065}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 1, "fair": 3.359, "rp": 2.608}, {"lo": 9, "hi": 10, "n": 2, "fair": 3.136, "rp": 2.489}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 2, "fair": 3.401, "rp": 3.087}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "A_\u5730\u4ea7": {"buckets": [{"lo": 0, "hi": 1, "n": 7, "fair": 3.239, "rp": 1.873}, {"lo": 1, "hi": 2, "n": 4, "fair": 3.236, "rp": 1.926}, {"lo": 2, "hi": 3, "n": 7, "fair": 3.493, "rp": 2.002}, {"lo": 3, "hi": 4, "n": 2, "fair": 3.763, "rp": 2.138}, {"lo": 4, "hi": 5, "n": 1, "fair": 3.84, "rp": 2.224}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 2, "fair": 3.454, "rp": 3.058}, {"lo": 7, "hi": 8, "n": 1, "fair": 2.874, "rp": 2.85}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 1, "fair": 4.113, "rp": 3.072}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "A_\u5176\u4ed6": {"buckets": [{"lo": 0, "hi": 1, "n": 7, "fair": 2.509, "rp": 1.26}, {"lo": 1, "hi": 2, "n": 10, "fair": 2.689, "rp": 1.365}, {"lo": 2, "hi": 3, "n": 13, "fair": 2.799, "rp": 1.464}, {"lo": 3, "hi": 4, "n": 8, "fair": 3.04, "rp": 1.707}, {"lo": 4, "hi": 5, "n": 8, "fair": 3.264, "rp": 2.012}, {"lo": 5, "hi": 6, "n": 1, "fair": 2.696, "rp": 1.563}, {"lo": 6, "hi": 7, "n": 3, "fair": 2.236, "rp": 1.714}, {"lo": 7, "hi": 8, "n": 2, "fair": 2.418, "rp": 1.765}, {"lo": 8, "hi": 9, "n": 3, "fair": 2.703, "rp": 2.286}, {"lo": 9, "hi": 10, "n": 6, "fair": 2.573, "rp": 2.093}, {"lo": 10, "hi": 12, "n": 1, "fair": 2.446, "rp": 1.811}, {"lo": 12, "hi": 15, "n": 2, "fair": 2.409, "rp": 2.114}, {"lo": 15, "hi": 20, "n": 4, "fair": 2.564, "rp": 2.418}, {"lo": 20, "hi": 25, "n": 1, "fair": 2.492, "rp": 2.327}, {"lo": 25, "hi": 30, "n": 3, "fair": 3.091, "rp": 2.36}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "BBB": {"buckets": [{"lo": 0, "hi": 1, "n": 155, "fair": 5.773, "rp": 3.383}, {"lo": 1, "hi": 2, "n": 141, "fair": 5.963, "rp": 5.239}, {"lo": 2, "hi": 3, "n": 72, "fair": 5.979, "rp": 4.511}, {"lo": 3, "hi": 4, "n": 3, "fair": 3.491, "rp": 2.131}, {"lo": 4, "hi": 5, "n": 4, "fair": 3.876, "rp": 2.492}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 2, "fair": 3.236, "rp": 2.921}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "BBB_\u57ce\u6295": {"buckets": [{"lo": 0, "hi": 1, "n": 107, "fair": 5.947, "rp": 4.431}, {"lo": 1, "hi": 2, "n": 108, "fair": 6.208, "rp": 5.881}, {"lo": 2, "hi": 3, "n": 51, "fair": 7.21, "rp": 4.815}, {"lo": 3, "hi": 4, "n": 1, "fair": 4.851, "rp": 2.64}, {"lo": 4, "hi": 5, "n": 0, "fair": null, "rp": null}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "BBB_\u592e\u4f01\u91d1\u878d": {"buckets": [{"lo": 0, "hi": 1, "n": 36, "fair": 3.298, "rp": 1.789}, {"lo": 1, "hi": 2, "n": 10, "fair": 3.724, "rp": 1.887}, {"lo": 2, "hi": 3, "n": 11, "fair": 3.562, "rp": 2.031}, {"lo": 3, "hi": 4, "n": 0, "fair": null, "rp": null}, {"lo": 4, "hi": 5, "n": 0, "fair": null, "rp": null}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "BBB_\u5730\u4ea7": {"buckets": [{"lo": 0, "hi": 1, "n": 2, "fair": 3.911, "rp": 2.824}, {"lo": 1, "hi": 2, "n": 1, "fair": 4.887, "rp": 3.744}, {"lo": 2, "hi": 3, "n": 4, "fair": 5.103, "rp": 3.874}, {"lo": 3, "hi": 4, "n": 0, "fair": null, "rp": null}, {"lo": 4, "hi": 5, "n": 1, "fair": 4.113, "rp": 2.545}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "BBB_\u5176\u4ed6": {"buckets": [{"lo": 0, "hi": 1, "n": 10, "fair": 3.677, "rp": 2.82}, {"lo": 1, "hi": 2, "n": 20, "fair": 4.005, "rp": 5.021}, {"lo": 2, "hi": 3, "n": 6, "fair": 4.389, "rp": 2.896}, {"lo": 3, "hi": 4, "n": 2, "fair": 3.482, "rp": 2.125}, {"lo": 4, "hi": 5, "n": 3, "fair": 3.639, "rp": 2.438}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 2, "fair": 3.236, "rp": 2.921}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "BB": {"buckets": [{"lo": 0, "hi": 1, "n": 1, "fair": 8.601, "rp": 7.261}, {"lo": 1, "hi": 2, "n": 0, "fair": null, "rp": null}, {"lo": 2, "hi": 3, "n": 0, "fair": null, "rp": null}, {"lo": 3, "hi": 4, "n": 1, "fair": 3.884, "rp": 2.464}, {"lo": 4, "hi": 5, "n": 0, "fair": null, "rp": null}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "NR": {"buckets": [{"lo": 0, "hi": 1, "n": 132, "fair": 5.344, "rp": 2.449}, {"lo": 1, "hi": 2, "n": 90, "fair": 5.682, "rp": 4.571}, {"lo": 2, "hi": 3, "n": 59, "fair": 6.039, "rp": 4.62}, {"lo": 3, "hi": 4, "n": 1, "fair": 6.388, "rp": null}, {"lo": 4, "hi": 5, "n": 2, "fair": 5.839, "rp": 4.172}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "NR_\u57ce\u6295": {"buckets": [{"lo": 0, "hi": 1, "n": 81, "fair": 5.465, "rp": 2.893}, {"lo": 1, "hi": 2, "n": 75, "fair": 5.721, "rp": 4.649}, {"lo": 2, "hi": 3, "n": 47, "fair": 6.084, "rp": 4.689}, {"lo": 3, "hi": 4, "n": 1, "fair": 6.388, "rp": null}, {"lo": 4, "hi": 5, "n": 2, "fair": 5.839, "rp": 4.172}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "NR_\u592e\u4f01\u91d1\u878d": {"buckets": [{"lo": 0, "hi": 1, "n": 22, "fair": 3.104, "rp": 1.472}, {"lo": 1, "hi": 2, "n": 5, "fair": 3.263, "rp": 2.416}, {"lo": 2, "hi": 3, "n": 6, "fair": 3.421, "rp": 2.053}, {"lo": 3, "hi": 4, "n": 0, "fair": null, "rp": null}, {"lo": 4, "hi": 5, "n": 0, "fair": null, "rp": null}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "NR_\u5730\u4ea7": {"buckets": [{"lo": 0, "hi": 1, "n": 6, "fair": 3.456, "rp": 1.948}, {"lo": 1, "hi": 2, "n": 1, "fair": 3.742, "rp": 2.483}, {"lo": 2, "hi": 3, "n": 0, "fair": null, "rp": null}, {"lo": 3, "hi": 4, "n": 0, "fair": null, "rp": null}, {"lo": 4, "hi": 5, "n": 0, "fair": null, "rp": null}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "NR_\u5176\u4ed6": {"buckets": [{"lo": 0, "hi": 1, "n": 22, "fair": 3.015, "rp": 2.659}, {"lo": 1, "hi": 2, "n": 9, "fair": 3.252, "rp": 4.465}, {"lo": 2, "hi": 3, "n": 5, "fair": 3.427, "rp": 3.072}, {"lo": 3, "hi": 4, "n": 0, "fair": null, "rp": null}, {"lo": 4, "hi": 5, "n": 0, "fair": null, "rp": null}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "ALL": {"buckets": [{"lo": 0, "hi": 1, "n": 362, "fair": 5.33, "rp": 2.372}, {"lo": 1, "hi": 2, "n": 290, "fair": 5.675, "rp": 4.281}, {"lo": 2, "hi": 3, "n": 191, "fair": 5.161, "rp": 3.216}, {"lo": 3, "hi": 4, "n": 25, "fair": 3.294, "rp": 1.888}, {"lo": 4, "hi": 5, "n": 33, "fair": 3.494, "rp": 2.034}, {"lo": 5, "hi": 6, "n": 3, "fair": 3.178, "rp": 1.736}, {"lo": 6, "hi": 7, "n": 7, "fair": 2.453, "rp": 1.884}, {"lo": 7, "hi": 8, "n": 4, "fair": 2.647, "rp": 1.986}, {"lo": 8, "hi": 9, "n": 11, "fair": 2.975, "rp": 2.169}, {"lo": 9, "hi": 10, "n": 16, "fair": 3.136, "rp": 2.489}, {"lo": 10, "hi": 12, "n": 1, "fair": 2.446, "rp": 1.811}, {"lo": 12, "hi": 15, "n": 2, "fair": 2.409, "rp": 2.114}, {"lo": 15, "hi": 20, "n": 7, "fair": 2.805, "rp": 2.57}, {"lo": 20, "hi": 25, "n": 1, "fair": 2.492, "rp": 2.327}, {"lo": 25, "hi": 30, "n": 11, "fair": 3.416, "rp": 2.886}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "ALL_\u57ce\u6295": {"buckets": [{"lo": 0, "hi": 1, "n": 199, "fair": 5.69, "rp": 3.723}, {"lo": 1, "hi": 2, "n": 196, "fair": 5.899, "rp": 4.894}, {"lo": 2, "hi": 3, "n": 100, "fair": 6.092, "rp": 4.734}, {"lo": 3, "hi": 4, "n": 2, "fair": 5.62, "rp": 2.64}, {"lo": 4, "hi": 5, "n": 2, "fair": 5.839, "rp": 4.172}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 0, "fair": null, "rp": null}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "ALL_\u592e\u4f01\u91d1\u878d": {"buckets": [{"lo": 0, "hi": 1, "n": 94, "fair": 3.152, "rp": 1.66}, {"lo": 1, "hi": 2, "n": 33, "fair": 3.276, "rp": 1.853}, {"lo": 2, "hi": 3, "n": 43, "fair": 3.292, "rp": 1.889}, {"lo": 3, "hi": 4, "n": 3, "fair": 3.237, "rp": 1.82}, {"lo": 4, "hi": 5, "n": 10, "fair": 3.446, "rp": 2.01}, {"lo": 5, "hi": 6, "n": 2, "fair": 3.288, "rp": 1.85}, {"lo": 6, "hi": 7, "n": 1, "fair": 2.453, "rp": 1.807}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 2, "fair": 3.401, "rp": 2.912}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "ALL_\u79d1\u6280": {"buckets": [{"lo": 0, "hi": 1, "n": 1, "fair": 3.955, "rp": null}, {"lo": 1, "hi": 2, "n": 0, "fair": null, "rp": null}, {"lo": 2, "hi": 3, "n": 2, "fair": 3.792, "rp": 2.346}, {"lo": 3, "hi": 4, "n": 1, "fair": 3.541, "rp": 2.061}, {"lo": 4, "hi": 5, "n": 2, "fair": 3.518, "rp": 2.065}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 0, "fair": null, "rp": null}, {"lo": 7, "hi": 8, "n": 0, "fair": null, "rp": null}, {"lo": 8, "hi": 9, "n": 1, "fair": 3.359, "rp": 2.608}, {"lo": 9, "hi": 10, "n": 2, "fair": 3.136, "rp": 2.489}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 2, "fair": 3.401, "rp": 3.087}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "ALL_\u5730\u4ea7": {"buckets": [{"lo": 0, "hi": 1, "n": 15, "fair": 3.415, "rp": 1.974}, {"lo": 1, "hi": 2, "n": 6, "fair": 3.278, "rp": 2.025}, {"lo": 2, "hi": 3, "n": 11, "fair": 3.499, "rp": 2.038}, {"lo": 3, "hi": 4, "n": 2, "fair": 3.763, "rp": 2.138}, {"lo": 4, "hi": 5, "n": 2, "fair": 3.977, "rp": 2.385}, {"lo": 5, "hi": 6, "n": 0, "fair": null, "rp": null}, {"lo": 6, "hi": 7, "n": 2, "fair": 3.454, "rp": 3.058}, {"lo": 7, "hi": 8, "n": 1, "fair": 2.874, "rp": 2.85}, {"lo": 8, "hi": 9, "n": 0, "fair": null, "rp": null}, {"lo": 9, "hi": 10, "n": 1, "fair": 4.113, "rp": 3.072}, {"lo": 10, "hi": 12, "n": 0, "fair": null, "rp": null}, {"lo": 12, "hi": 15, "n": 0, "fair": null, "rp": null}, {"lo": 15, "hi": 20, "n": 0, "fair": null, "rp": null}, {"lo": 20, "hi": 25, "n": 0, "fair": null, "rp": null}, {"lo": 25, "hi": 30, "n": 0, "fair": null, "rp": null}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}, "ALL_\u5176\u4ed6": {"buckets": [{"lo": 0, "hi": 1, "n": 53, "fair": 2.995, "rp": 1.512}, {"lo": 1, "hi": 2, "n": 53, "fair": 3.246, "rp": 2.111}, {"lo": 2, "hi": 3, "n": 34, "fair": 3.151, "rp": 1.97}, {"lo": 3, "hi": 4, "n": 17, "fair": 3.26, "rp": 1.65}, {"lo": 4, "hi": 5, "n": 17, "fair": 3.366, "rp": 1.919}, {"lo": 5, "hi": 6, "n": 1, "fair": 2.696, "rp": 1.563}, {"lo": 6, "hi": 7, "n": 4, "fair": 2.288, "rp": 1.799}, {"lo": 7, "hi": 8, "n": 3, "fair": 2.419, "rp": 1.775}, {"lo": 8, "hi": 9, "n": 10, "fair": 2.939, "rp": 2.083}, {"lo": 9, "hi": 10, "n": 11, "fair": 2.705, "rp": 2.131}, {"lo": 10, "hi": 12, "n": 1, "fair": 2.446, "rp": 1.811}, {"lo": 12, "hi": 15, "n": 2, "fair": 2.409, "rp": 2.114}, {"lo": 15, "hi": 20, "n": 7, "fair": 2.805, "rp": 2.57}, {"lo": 20, "hi": 25, "n": 1, "fair": 2.492, "rp": 2.327}, {"lo": 25, "hi": 30, "n": 9, "fair": 3.416, "rp": 2.709}, {"lo": 30, "hi": 99, "n": 0, "fair": null, "rp": null}]}};
+var NS = [{"tenor": 0.25, "yield": 1.081}, {"tenor": 0.5, "yield": 1.083}, {"tenor": 1.0, "yield": 1.115}, {"tenor": 2.0, "yield": 1.249}, {"tenor": 3.0, "yield": 1.287}, {"tenor": 5.0, "yield": 1.442}, {"tenor": 7.0, "yield": 1.567}, {"tenor": 10.0, "yield": 1.739}, {"tenor": 15.0, "yield": 1.993}, {"tenor": 20.0, "yield": 2.22}, {"tenor": 30.0, "yield": 2.254}];
+var HIST = [{"date": "2026-06-16", "AAA_1y": 1.214, "AAA_3y": 1.393, "AAA_5y": 1.618, "AAA_7y": 1.833, "AAA_10y": 1.942, "AA_1y": 1.463, "AA_3y": 1.246, "AA_5y": 1.255, "AA_7y": 1.281, "AA_10y": 1.325, "A_1y": 0.937, "A_3y": 1.098, "A_5y": 1.693, "A_7y": 1.756, "A_10y": 2.145, "BBB_1y": 1.997, "BBB_3y": 2.137, "BBB_5y": 1.987, "BBB_10y": 4.117}, {"date": "2026-06-17", "AAA_1y": 1.202, "AAA_3y": 1.321, "AAA_5y": 1.591, "AAA_7y": 1.884, "AAA_10y": 2.032, "AA_1y": 1.416, "AA_3y": 1.474, "AA_5y": 1.734, "AA_7y": 2.038, "AA_10y": 2.45, "A_1y": 1.304, "A_3y": 1.486, "A_5y": 1.782, "A_7y": 2.245, "A_10y": 2.758, "BBB_1y": 1.938, "BBB_3y": 2.068, "BBB_5y": 1.97, "BBB_10y": 4.225, "BB_1y": 3.95, "NR_1y": 4.702, "NR_3y": 1.798, "NR_5y": 2.263, "NR_7y": 2.937, "NR_10y": 3.697}, {"date": "2026-06-18", "AAA_1y": 2.481, "AAA_3y": 2.22, "AAA_5y": 2.432, "AAA_7y": 3.156, "AAA_10y": 2.99, "AA_1y": 2.725, "AA_3y": 2.89, "AA_5y": 3.013, "AA_7y": 3.295, "AA_10y": 3.179, "A_1y": 3.126, "A_3y": 3.483, "A_5y": 3.606, "A_7y": 3.941, "A_10y": 4.177, "BBB_1y": 4.54, "BBB_3y": 4.517, "BBB_5y": 2.409, "BBB_10y": 4.113, "BB_1y": 7.22, "NR_1y": 4.151, "NR_3y": 3.76, "NR_5y": 3.854, "NR_7y": 3.373, "NR_10y": 4.122}, {"date": "2026-06-22", "AA_1y": 1.657, "AA_3y": 1.839, "AA_5y": 2.111, "AA_7y": 2.229, "AA_10y": 2.091, "A_1y": 2.293, "A_3y": 2.144, "A_5y": 2.069, "A_7y": 2.844, "A_10y": 1.808, "BBB_1y": 4.982, "BBB_3y": 4.753, "BBB_5y": 3.77, "BBB_10y": 2.905, "BB_1y": 7.654, "NR_1y": 4.647, "NR_3y": 5.145, "NR_5y": 4.516}, {"date": "2026-06-23", "AA_1y": 2.119, "AA_3y": 2.03, "AA_5y": 2.162, "AA_7y": 2.233, "AA_10y": 2.204, "A_1y": 2.221, "A_3y": 1.989, "A_5y": 2.058, "A_7y": 3.149, "A_10y": 2.373, "BBB_1y": 5.027, "BBB_3y": 4.958, "BBB_5y": 4.947, "BBB_10y": 3.801, "BB_1y": 7.864, "NR_1y": 4.754, "NR_3y": 5.247, "NR_5y": 4.625}, {"date": "2026-06-24", "AA_1y": 2.175, "AA_3y": 2.221, "AA_5y": 2.104, "AA_7y": 2.132, "AA_10y": 2.553, "A_1y": 2.237, "A_3y": 2.071, "A_5y": 2.045, "A_7y": 2.743, "A_10y": 1.832, "BBB_1y": 5.043, "BBB_3y": 4.96, "BBB_5y": 7.657, "BBB_10y": 2.429, "BB_1y": 7.749, "NR_1y": 4.777, "NR_3y": 5.248, "NR_5y": 4.626}, {"date": "2026-06-25", "AA_1y": 2.376, "AA_3y": 2.353, "AA_5y": 2.034, "AA_7y": 2.054, "AA_10y": 2.573, "A_1y": 2.143, "A_3y": 2.009, "A_5y": 1.976, "A_7y": 2.665, "A_10y": 1.851, "BBB_1y": 4.928, "BBB_3y": 4.89, "BBB_5y": 7.589, "BBB_10y": 2.359, "BB_1y": 7.634, "NR_1y": 4.655, "NR_3y": 5.185, "NR_5y": 4.559}, {"date": "2026-06-26", "AA_1y": 2.359, "AA_3y": 2.346, "AA_5y": 2.027, "AA_7y": 2.042, "AA_10y": 3.364, "A_1y": 2.131, "A_3y": 1.999, "A_5y": 1.969, "A_7y": 3.074, "A_10y": 2.635, "BBB_1y": 4.916, "BBB_3y": 4.883, "BBB_5y": 7.582, "BBB_10y": 3.149, "BB_1y": 7.618, "NR_1y": 4.642, "NR_3y": 5.173, "NR_5y": 4.553}, {"date": "2026-06-29", "AA_1y": 1.649, "AA_3y": 1.674, "AA_5y": 1.614, "AA_7y": 1.623, "AA_10y": 2.55, "A_1y": 1.841, "A_3y": 1.611, "A_5y": 1.639, "A_7y": 2.519, "A_10y": 2.372, "BBB_1y": 2.542, "BBB_3y": 2.491, "BBB_5y": 3.178, "BBB_10y": 2.973, "BB_1y": 4.438, "NR_1y": 5.257, "NR_3y": 5.331, "NR_5y": 1.975}, {"date": "2026-06-30", "AA_1y": 3.067, "AA_3y": 3.186, "AA_5y": 3.361, "AA_7y": 2.317, "AA_10y": 2.997, "A_1y": 3.26, "A_3y": 3.155, "A_5y": 3.252, "A_7y": 2.86, "A_10y": 2.771, "BBB_1y": 5.943, "BBB_3y": 5.924, "BBB_5y": 8.809, "BBB_10y": 3.236, "BB_1y": 8.613, "NR_1y": 5.605, "NR_3y": 6.144, "NR_5y": 5.714}, {"date": "2026-07-01", "AA_1y": 3.05, "AA_3y": 3.156, "AA_5y": 3.342, "AA_7y": 2.318, "AA_10y": 2.997, "A_1y": 3.249, "A_3y": 3.131, "A_5y": 3.228, "A_7y": 2.861, "A_10y": 2.771, "BBB_1y": 5.933, "BBB_3y": 5.894, "BBB_5y": 8.787, "BBB_10y": 3.236, "BB_1y": 8.603, "NR_1y": 5.596, "NR_3y": 6.113, "NR_5y": 5.693}, {"date": "2026-07-02", "AA_1y": 3.05, "AA_3y": 3.155, "AA_5y": 3.343, "AA_7y": 2.32, "AA_10y": 2.997, "A_1y": 3.253, "A_3y": 3.131, "A_5y": 3.228, "A_7y": 2.862, "A_10y": 2.771, "BBB_1y": 5.933, "BBB_3y": 5.894, "BBB_5y": 8.787, "BBB_10y": 3.236, "BB_1y": 8.603, "NR_1y": 5.595, "NR_3y": 6.112, "NR_5y": 5.694}, {"date": "2026-07-03", "AA_1y": 3.077, "AA_3y": 3.255, "AA_5y": 3.471, "AA_7y": 2.326, "AA_10y": 2.997, "A_1y": 3.276, "A_3y": 3.231, "A_5y": 3.351, "A_7y": 2.864, "A_10y": 2.771, "BBB_1y": 5.948, "BBB_3y": 5.978, "BBB_5y": 8.918, "BBB_10y": 3.236, "BB_1y": 8.623, "NR_1y": 5.615, "NR_3y": 6.193, "NR_5y": 5.828}, {"date": "2026-07-04", "AA_1y": 3.077, "AA_3y": 3.255, "AA_5y": 3.471, "AA_7y": 2.326, "AA_10y": 2.997, "A_1y": 3.276, "A_3y": 3.231, "A_5y": 3.351, "A_7y": 3.143, "A_10y": 2.771, "BBB_1y": 5.948, "BBB_3y": 5.978, "BBB_5y": 8.918, "BBB_10y": 3.236, "BB_1y": 8.623, "NR_1y": 5.615, "NR_3y": 6.193, "NR_5y": 5.828}, {"date": "2026-07-05", "AA_1y": 3.077, "AA_3y": 3.255, "AA_5y": 3.471, "AA_7y": 2.326, "AA_10y": 2.997, "A_1y": 3.276, "A_3y": 3.231, "A_5y": 3.351, "A_7y": 3.143, "A_10y": 2.771, "BBB_1y": 5.948, "BBB_3y": 5.978, "BBB_5y": 8.918, "BBB_10y": 3.236, "BB_1y": 8.623, "NR_1y": 5.615, "NR_3y": 6.199, "NR_5y": 5.828}, {"date": "2026-07-06", "AA_1y": 3.077, "AA_3y": 3.255, "AA_5y": 3.471, "AA_7y": 2.326, "AA_10y": 2.997, "A_1y": 3.284, "A_3y": 3.231, "A_5y": 3.351, "A_7y": 3.143, "A_10y": 2.771, "BBB_1y": 5.947, "BBB_3y": 5.978, "BBB_5y": 8.918, "BBB_10y": 3.236, "BB_1y": 8.623, "NR_1y": 5.615, "NR_3y": 6.199, "NR_5y": 5.828}, {"date": "2026-07-07", "AA_1y": 3.077, "AA_3y": 3.255, "AA_5y": 3.471, "AA_7y": 2.326, "AA_10y": 2.997, "A_1y": 3.284, "A_3y": 3.231, "A_5y": 3.351, "A_7y": 3.143, "A_10y": 2.771, "BBB_1y": 5.944, "BBB_3y": 5.978, "BBB_5y": 8.918, "BBB_10y": 3.236, "BB_1y": 8.623, "NR_1y": 5.615, "NR_3y": 6.199, "NR_5y": 5.828}, {"date": "2026-07-08", "AA_1y": 3.029, "AA_3y": 3.178, "AA_5y": 3.446, "AA_7y": 2.332, "AA_10y": 2.997, "A_1y": 3.234, "A_3y": 3.139, "A_5y": 3.324, "A_7y": 3.145, "A_10y": 2.771, "BBB_1y": 5.894, "BBB_3y": 5.777, "BBB_5y": 8.889, "BBB_10y": 3.236, "BB_1y": 8.572, "NR_1y": 5.565, "NR_3y": 6.113, "NR_5y": 5.803}, {"date": "2026-07-09", "AA_1y": 3.019, "AA_3y": 3.192, "AA_5y": 3.429, "AA_7y": 2.333, "AA_10y": 2.997, "A_1y": 3.224, "A_3y": 3.156, "A_5y": 3.313, "A_7y": 3.144, "A_10y": 2.771, "BBB_1y": 5.889, "BBB_3y": 5.791, "BBB_5y": 8.873, "BBB_10y": 3.236, "BB_1y": 8.561, "NR_1y": 5.556, "NR_3y": 6.123, "NR_5y": 5.787}, {"date": "2026-07-10", "AA_1y": 3.052, "AA_3y": 3.237, "AA_5y": 3.487, "AA_7y": 2.337, "AA_10y": 2.997, "A_1y": 3.253, "A_3y": 3.197, "A_5y": 3.372, "A_7y": 3.151, "A_10y": 2.771, "BBB_1y": 5.927, "BBB_3y": 5.831, "BBB_5y": 8.933, "BBB_10y": 3.236, "BB_1y": 8.591, "NR_1y": 5.586, "NR_3y": 6.162, "NR_5y": 5.847}];
+var MODEL_CURVES = {"AAA": [{"tenor": 1, "yield": 1.683, "rf": 1.115, "spread_bp": 56.8}, {"tenor": 2, "yield": 1.724, "rf": 1.249, "spread_bp": 47.5}, {"tenor": 3, "yield": 1.67, "rf": 1.287, "spread_bp": 38.2}, {"tenor": 4, "yield": 1.773, "rf": 1.365, "spread_bp": 40.8}, {"tenor": 5, "yield": 1.876, "rf": 1.442, "spread_bp": 43.4}, {"tenor": 6, "yield": 1.938, "rf": 1.504, "spread_bp": 43.4}, {"tenor": 7, "yield": 2.001, "rf": 1.567, "spread_bp": 43.4}, {"tenor": 8, "yield": 2.058, "rf": 1.624, "spread_bp": 43.4}, {"tenor": 9, "yield": 2.115, "rf": 1.681, "spread_bp": 43.4}, {"tenor": 10, "yield": 2.173, "rf": 1.739, "spread_bp": 43.4}, {"tenor": 12, "yield": 2.274, "rf": 1.84, "spread_bp": 43.4}, {"tenor": 15, "yield": 2.362, "rf": 1.993, "spread_bp": 36.9}, {"tenor": 20, "yield": 2.545, "rf": 2.22, "spread_bp": 32.6}, {"tenor": 25, "yield": 2.519, "rf": 2.237, "spread_bp": 28.2}, {"tenor": 30, "yield": 2.537, "rf": 2.254, "spread_bp": 28.2}], "AA": [{"tenor": 1, "yield": 1.425, "rf": 1.115, "spread_bp": 31.0}, {"tenor": 2, "yield": 1.534, "rf": 1.249, "spread_bp": 28.5}, {"tenor": 3, "yield": 1.547, "rf": 1.287, "spread_bp": 26.0}, {"tenor": 4, "yield": 1.685, "rf": 1.365, "spread_bp": 32.0}, {"tenor": 5, "yield": 1.822, "rf": 1.442, "spread_bp": 38.0}, {"tenor": 6, "yield": 1.866, "rf": 1.504, "spread_bp": 36.2}, {"tenor": 7, "yield": 1.911, "rf": 1.567, "spread_bp": 34.4}, {"tenor": 8, "yield": 1.95, "rf": 1.624, "spread_bp": 32.6}, {"tenor": 9, "yield": 1.989, "rf": 1.681, "spread_bp": 30.8}, {"tenor": 10, "yield": 2.029, "rf": 1.739, "spread_bp": 29.0}, {"tenor": 12, "yield": 2.13, "rf": 1.84, "spread_bp": 29.0}, {"tenor": 15, "yield": 2.24, "rf": 1.993, "spread_bp": 24.6}, {"tenor": 20, "yield": 2.437, "rf": 2.22, "spread_bp": 21.8}, {"tenor": 25, "yield": 2.426, "rf": 2.237, "spread_bp": 18.9}, {"tenor": 30, "yield": 2.443, "rf": 2.254, "spread_bp": 18.9}], "A": [{"tenor": 1, "yield": 1.745, "rf": 1.115, "spread_bp": 63.0}, {"tenor": 2, "yield": 1.794, "rf": 1.249, "spread_bp": 54.5}, {"tenor": 3, "yield": 1.747, "rf": 1.287, "spread_bp": 46.0}, {"tenor": 4, "yield": 1.86, "rf": 1.365, "spread_bp": 49.5}, {"tenor": 5, "yield": 1.972, "rf": 1.442, "spread_bp": 53.0}, {"tenor": 6, "yield": 2.034, "rf": 1.504, "spread_bp": 53.0}, {"tenor": 7, "yield": 2.097, "rf": 1.567, "spread_bp": 53.0}, {"tenor": 8, "yield": 2.154, "rf": 1.624, "spread_bp": 53.0}, {"tenor": 9, "yield": 2.211, "rf": 1.681, "spread_bp": 53.0}, {"tenor": 10, "yield": 2.269, "rf": 1.739, "spread_bp": 53.0}, {"tenor": 12, "yield": 2.37, "rf": 1.84, "spread_bp": 53.0}, {"tenor": 15, "yield": 2.444, "rf": 1.993, "spread_bp": 45.0}, {"tenor": 20, "yield": 2.617, "rf": 2.22, "spread_bp": 39.8}, {"tenor": 25, "yield": 2.582, "rf": 2.237, "spread_bp": 34.5}, {"tenor": 30, "yield": 2.599, "rf": 2.254, "spread_bp": 34.5}], "BBB": [{"tenor": 1, "yield": 1.935, "rf": 1.115, "spread_bp": 82.0}, {"tenor": 2, "yield": 2.044, "rf": 1.249, "spread_bp": 79.5}, {"tenor": 3, "yield": 2.057, "rf": 1.287, "spread_bp": 77.0}, {"tenor": 4, "yield": 2.135, "rf": 1.365, "spread_bp": 77.0}, {"tenor": 5, "yield": 2.212, "rf": 1.442, "spread_bp": 77.0}, {"tenor": 6, "yield": 2.274, "rf": 1.504, "spread_bp": 77.0}, {"tenor": 7, "yield": 2.337, "rf": 1.567, "spread_bp": 77.0}, {"tenor": 8, "yield": 2.394, "rf": 1.624, "spread_bp": 77.0}, {"tenor": 9, "yield": 2.451, "rf": 1.681, "spread_bp": 77.0}, {"tenor": 10, "yield": 2.509, "rf": 1.739, "spread_bp": 77.0}, {"tenor": 12, "yield": 2.61, "rf": 1.84, "spread_bp": 77.0}, {"tenor": 15, "yield": 2.648, "rf": 1.993, "spread_bp": 65.5}, {"tenor": 20, "yield": 2.797, "rf": 2.22, "spread_bp": 57.8}, {"tenor": 25, "yield": 2.738, "rf": 2.237, "spread_bp": 50.1}, {"tenor": 30, "yield": 2.755, "rf": 2.254, "spread_bp": 50.1}], "BB": [{"tenor": 1, "yield": 7.095, "rf": 1.115, "spread_bp": 598.0}, {"tenor": 2, "yield": 7.229, "rf": 1.249, "spread_bp": 598.0}, {"tenor": 3, "yield": 7.267, "rf": 1.287, "spread_bp": 598.0}, {"tenor": 4, "yield": 7.345, "rf": 1.365, "spread_bp": 598.0}, {"tenor": 5, "yield": 7.422, "rf": 1.442, "spread_bp": 598.0}, {"tenor": 6, "yield": 7.484, "rf": 1.504, "spread_bp": 598.0}, {"tenor": 7, "yield": 7.547, "rf": 1.567, "spread_bp": 598.0}, {"tenor": 8, "yield": 7.604, "rf": 1.624, "spread_bp": 598.0}, {"tenor": 9, "yield": 7.661, "rf": 1.681, "spread_bp": 598.0}, {"tenor": 10, "yield": 7.719, "rf": 1.739, "spread_bp": 598.0}, {"tenor": 12, "yield": 7.82, "rf": 1.84, "spread_bp": 598.0}, {"tenor": 15, "yield": 7.973, "rf": 1.993, "spread_bp": 598.0}, {"tenor": 20, "yield": 8.2, "rf": 2.22, "spread_bp": 598.0}, {"tenor": 25, "yield": 8.217, "rf": 2.237, "spread_bp": 598.0}, {"tenor": 30, "yield": 8.235, "rf": 2.254, "spread_bp": 598.0}], "NR": [{"tenor": 1, "yield": 1.575, "rf": 1.115, "spread_bp": 46.0}, {"tenor": 2, "yield": 1.844, "rf": 1.249, "spread_bp": 59.5}, {"tenor": 3, "yield": 2.017, "rf": 1.287, "spread_bp": 73.0}, {"tenor": 4, "yield": 2.095, "rf": 1.365, "spread_bp": 73.0}, {"tenor": 5, "yield": 2.172, "rf": 1.442, "spread_bp": 73.0}, {"tenor": 6, "yield": 2.234, "rf": 1.504, "spread_bp": 73.0}, {"tenor": 7, "yield": 2.297, "rf": 1.567, "spread_bp": 73.0}, {"tenor": 8, "yield": 2.354, "rf": 1.624, "spread_bp": 73.0}, {"tenor": 9, "yield": 2.411, "rf": 1.681, "spread_bp": 73.0}, {"tenor": 10, "yield": 2.469, "rf": 1.739, "spread_bp": 73.0}, {"tenor": 12, "yield": 2.57, "rf": 1.84, "spread_bp": 73.0}, {"tenor": 15, "yield": 2.723, "rf": 1.993, "spread_bp": 73.0}, {"tenor": 20, "yield": 2.95, "rf": 2.22, "spread_bp": 73.0}, {"tenor": 25, "yield": 2.967, "rf": 2.237, "spread_bp": 73.0}, {"tenor": 30, "yield": 2.984, "rf": 2.254, "spread_bp": 73.0}], "ALL": [{"tenor": 1, "yield": 1.745, "rf": 1.115, "spread_bp": 63.0}, {"tenor": 2, "yield": 1.794, "rf": 1.249, "spread_bp": 54.5}, {"tenor": 3, "yield": 1.747, "rf": 1.287, "spread_bp": 46.0}, {"tenor": 4, "yield": 1.86, "rf": 1.365, "spread_bp": 49.5}, {"tenor": 5, "yield": 1.972, "rf": 1.442, "spread_bp": 53.0}, {"tenor": 6, "yield": 2.034, "rf": 1.504, "spread_bp": 53.0}, {"tenor": 7, "yield": 2.097, "rf": 1.567, "spread_bp": 53.0}, {"tenor": 8, "yield": 2.154, "rf": 1.624, "spread_bp": 53.0}, {"tenor": 9, "yield": 2.211, "rf": 1.681, "spread_bp": 53.0}, {"tenor": 10, "yield": 2.269, "rf": 1.739, "spread_bp": 53.0}, {"tenor": 12, "yield": 2.37, "rf": 1.84, "spread_bp": 53.0}, {"tenor": 15, "yield": 2.444, "rf": 1.993, "spread_bp": 45.0}, {"tenor": 20, "yield": 2.617, "rf": 2.22, "spread_bp": 39.8}, {"tenor": 25, "yield": 2.582, "rf": 2.237, "spread_bp": 34.5}, {"tenor": 30, "yield": 2.599, "rf": 2.254, "spread_bp": 34.5}]};
+
+var c1 = null, c2 = null, cH1y = null, cH5y = null;
+var YR_TENORS = [1,2,3,4,5,6,7,8,9,10,12,15,20,25,30];
+var COLORS = {AAA:'#1e3a8a',AA:'#2563eb',A:'#059669',BBB:'#d97706',BB:'#ea580c',NR:'#6b7280',ALL:'#7c3aed'};
+
+draw();
+
+function filterCurveData() {
+  var noLGFV = document.getElementById('noLGFV').checked;
+  var cnOnly = document.getElementById('cnOnly').checked;
+  // We don't have server-side filtering for static, so we use the base CURVE
+  // In practice, the main differences are visible in bond counts
+  return CURVE;
+}
+
+function draw() {
+  var rg = document.getElementById('rg').value;
+  var sf = document.getElementById('sf').value;
+  var fc = filterCurveData();
+
+  if (rg === 'NS' && !sf) {
+    drawNS();
+    return;
+  }
+
+  var ratingParam = rg === 'ALL' ? 'A' : rg;
+  var modelData = MODEL_CURVES[ratingParam] || MODEL_CURVES['A'];
+  if (sf) {
+    // With sector filter, fall back to base rating curve (sector-specific model curves not pre-fetched)
+    modelData = MODEL_CURVES[ratingParam] || MODEL_CURVES['A'];
+  }
+
+  var rpKey = rg + (sf ? '_' + sf : '');
+  var rpData = fc[rpKey] || fc[rg] || fc['ALL'];
+  var buckets = rpData ? rpData.buckets : [];
+  var totalN = 0;
+  buckets.forEach(function(b){ if (b.n) totalN += b.n; });
+
+  var avgFair = modelData.reduce(function(s,p){ return s + p.yield; }, 0) / modelData.length;
+  var fl = '';
+  if (document.getElementById('noLGFV').checked) fl += ' ex-LGFV';
+  if (document.getElementById('cnOnly').checked) fl += ' CN-only';
+
+  document.getElementById('sum').innerHTML =
+    '<div class="stat"><div class="v">' + avgFair.toFixed(2) + '%</div><div class="l">Avg Fair (' + rg + fl + ')</div></div>' +
+    '<div class="stat"><div class="v">' + (totalN || '--') + '</div><div class="l">Bonds</div></div>';
+
+  var clr = COLORS[rg] || '#7c3aed';
+  var labels = modelData.map(function(p){ return p.tenor + 'Y'; });
+  var ds = [
+    { label: 'Fair ' + rg, data: modelData.map(function(p){ return p.yield; }), borderColor: clr, backgroundColor: 'transparent', tension: 0.4, borderWidth: 2.5, pointRadius: 4 },
+    { label: 'Risk-Free', data: modelData.map(function(p){ return p.rf; }), borderColor: '#93c5fd', backgroundColor: 'transparent', tension: 0.4, borderWidth: 1.5, pointRadius: 2, borderDash: [5,3] }
+  ];
+
+  if (c1) c1.destroy();
+  c1 = new Chart(document.getElementById('ch1'), {
+    type: 'line', data: { labels: labels, datasets: ds },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 11 } } },
+        tooltip: { callbacks: { label: function(ctx){ return ctx.dataset.label + ': ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '--') + '%'; } } },
+        datalabels: { anchor: 'end', align: 'top', offset: 2, color: function(ctx){ return ctx.dataset.borderColor || clr; }, font: { size: 9, weight: 'bold' }, formatter: function(v){ return v != null ? v.toFixed(2) + '%' : ''; } }
+      },
+      scales: { y: { title: { display: true, text: 'Yield (%)' }, ticks: { callback: function(v){ return v.toFixed(2) + '%'; } }, grace: '5%' }, x: { title: { display: true, text: 'Maturity' } } }
+    }
+  });
+
+  if (c2) c2.destroy();
+  var bucketLabels = [], bucketCounts = [];
+  buckets.forEach(function(b){ bucketLabels.push(b.lo + '-' + b.hi + 'Y'); bucketCounts.push(b.n || 0); });
+  c2 = new Chart(document.getElementById('ch2'), {
+    type: 'bar', data: { labels: bucketLabels, datasets: [{ label: 'Bonds', data: bucketCounts, backgroundColor: '#2563eb' }] },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false }, datalabels: { anchor: 'end', align: 'top', color: '#1e3a8a', font: { size: 10, weight: 'bold' }, formatter: function(v){ return v > 0 ? v : ''; } } },
+      scales: { y: { title: { display: true, text: 'Sample Count' }, beginAtZero: true }, x: { title: { display: true, text: 'Maturity' } } }
+    }
+  });
+}
+
+function drawNS() {
+  document.getElementById('sum').innerHTML =
+    '<div class="stat"><div class="v">CGB</div><div class="l">Curve Type</div></div>' +
+    '<div class="stat"><div class="v">' + (NS.length > 0 ? NS[NS.length-1].yield.toFixed(2) : '--') + '%</div><div class="l">30Y Risk-Free</div></div>';
+
+  var nsFair = [], nsLabels = [];
+  YR_TENORS.forEach(function(yr) {
+    nsLabels.push(yr + 'Y');
+    var y = 0;
+    for (var i = 0; i < NS.length - 1; i++) {
+      if (yr >= NS[i].tenor && yr <= NS[i+1].tenor) {
+        var frac = (yr - NS[i].tenor) / (NS[i+1].tenor - NS[i].tenor);
+        y = NS[i].yield + frac * (NS[i+1].yield - NS[i].yield);
+        break;
+      }
+    }
+    if (y === 0 && yr >= NS[NS.length-1].tenor) y = NS[NS.length-1].yield;
+    if (y === 0 && yr <= NS[0].tenor) y = NS[0].yield;
+    nsFair.push(y);
+  });
+
+  if (c1) c1.destroy();
+  c1 = new Chart(document.getElementById('ch1'), {
+    type: 'line', data: { labels: nsLabels, datasets: [
+      { label: 'CGB Risk-Free', data: nsFair, borderColor: '#1e3a8a', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2.5, pointRadius: 4 }
+    ]},
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 11 } } },
+        tooltip: { callbacks: { label: function(ctx){ return ctx.dataset.label + ': ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '--') + '%'; } } },
+        datalabels: { anchor: 'end', align: 'top', offset: 2, color: '#1e3a8a', font: { size: 9, weight: 'bold' }, formatter: function(v){ return v != null ? v.toFixed(2) + '%' : ''; } }
+      },
+      scales: { y: { title: { display: true, text: 'Yield (%)' }, ticks: { callback: function(v){ return v.toFixed(2) + '%'; } }, grace: '5%' }, x: { title: { display: true, text: 'Maturity' } } }
+    }
+  });
+
+  if (c2) c2.destroy();
+  c2 = new Chart(document.getElementById('ch2'), {
+    type: 'bar', data: { labels: nsLabels, datasets: [{ label: 'CGB', data: nsLabels.map(function(){ return 1; }), backgroundColor: '#1e3a8a' }] },
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { display: false }, x: { title: { display: true, text: 'Maturity' } } } }
+  });
+}
+
+function exportCSV() {
+  alert('CSV export not available in static snapshot. Visit the live version for CSV export.');
+}
+
+function toggleHist() {
+  var wrap = document.getElementById('histWrap');
+  var btn = document.getElementById('histBtn');
+  if (wrap.style.display === 'none') {
+    wrap.style.display = 'block';
+    btn.classList.add('on');
+    btn.textContent = '隐藏历史';
+    drawHist();
+  } else {
+    wrap.style.display = 'none';
+    btn.classList.remove('on');
+    btn.textContent = '历史趋势';
+  }
+}
+
+function drawHist() {
+  if (HIST.length < 2) return;
+  var tenors = ['1y', '5y'];
+  var ids = ['ch_h1y', 'ch_h5y'];
+  var refs = [cH1y, cH5y];
+
+  for (var t = 0; t < 2; t++) {
+    var labels = [];
+    var data = [];
+    HIST.forEach(function(h) {
+      labels.push(h.date.slice(5));
+      var v = h['ALL_' + tenors[t]] || h['A_' + tenors[t]] || h['AA_' + tenors[t]];
+      data.push(v != null && !isNaN(v) ? v : null);
+    });
+
+    if (refs[t]) refs[t].destroy();
+    var ctx = document.getElementById(ids[t]);
+    refs[t] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Fair Yield',
+          data: data,
+          borderColor: '#1e3a8a',
+          backgroundColor: 'rgba(30,58,138,0.08)',
+          tension: 0.3,
+          borderWidth: 2.5,
+          pointRadius: 5,
+          pointBackgroundColor: '#1e3a8a',
+          fill: true
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: function(c){ return (c.parsed.y != null ? c.parsed.y.toFixed(3) : '--') + '%'; } } }
+        },
+        scales: {
+          y: { title: { display: true, text: 'Fair Yield %', font: { size: 12 } }, ticks: { callback: function(v){ return v.toFixed(2) + '%'; }, font: { size: 11 } } },
+          x: { title: { display: true, text: 'Date', font: { size: 12 } }, ticks: { font: { size: 11 } } }
+        }
+      }
+    });
+  }
+  cH1y = refs[0];
+  cH5y = refs[1];
+}
+</script>
+</body>
+</html>

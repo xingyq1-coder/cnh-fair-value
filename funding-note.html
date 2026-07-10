@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Funding Note 平滑估值 — DMI Fair Value Engine</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;color:#1a1a2e;font-size:13px}
+.hdr{background:#1e3a8a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center}
+.hdr h1{font-size:18px;font-weight:700;margin:0}
+.hdr a{color:#93c5fd;text-decoration:none;font-size:12px;margin-left:16px;padding:4px 10px;border:1px solid rgba(255,255,255,.25);border-radius:4px}
+.hdr a:hover{background:rgba(255,255,255,.1)}
+.bar{padding:14px 16px;background:#fff;border-bottom:1px solid #e5e7eb;line-height:1.8;font-size:13px;color:#374151}
+.bar b{color:#1e3a8a}
+.bar .c{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px 0}
+.bar .c>div{background:#f0f4ff;padding:10px;border-radius:4px;text-align:center}
+.bar .c .v{font-size:20px;font-weight:700;color:#1e3a8a}
+.bar .c .l{font-size:10px;color:#6b7280;margin-top:2px}
+.tbl-wrap{overflow-x:auto;margin:8px 12px}
+table{width:100%;border-collapse:collapse;font-size:11px;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+th{background:#f8fafc;padding:5px 6px;text-align:left;font-weight:600;border-bottom:2px solid #e5e7eb;white-space:nowrap;font-size:10px;color:#64748b}
+td{padding:4px 6px;border-bottom:1px solid #f1f5f9;color:#1e293b;font-size:11px}
+tr:hover td{background:#eff6ff}
+.note{font-size:10px;color:#9ca3af;padding:8px 16px;text-align:center}
+.foot{background:#f0f4ff;margin:12px;padding:16px;border-radius:6px;border-left:3px solid #1e3a8a;font-size:12px;line-height:1.8}
+.foot h3{font-size:13px;color:#1e3a8a;margin-bottom:6px}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>DMI Fair Value Engine</h1><div><a href="index.html">&larr; Bonds</a><a href="curve.html" style="margin-left:8px">Yield Curve</a></div></div>
+
+<div class="bar">
+<b>Funding Note 平滑估值</b> — 针对零流动性、持有至到期策略的债券，提供基于基本面的模型估值，避免彭博BVAL式无序跳动。
+<div class="c" id="sum">
+ <div><div class="v">--</div><div class="l">Funding Note 数量</div></div>
+ <div><div class="v">--</div><div class="l">Fair% 中位数</div></div>
+ <div><div class="v">--</div><div class="l">最低 Fair%</div></div>
+ <div><div class="v">--</div><div class="l">最高 Fair%</div></div>
+</div>
+</div>
+
+<div class="foot">
+<h3>为什么彭博BVAL不适合Funding Note</h3>
+彭博BVAL对无流动性债券依赖矩阵模型+零星做市商报价。<b>一个过时的报价可能导致0.5-2pt的突然跳动。</b><br>
+对持有至到期策略，这些跳动是噪音——没有经济意义。但理财客户看到净值波动就会紧张。<br><br>
+<h3>我们的做法</h3>
+不依赖逐日做市商报价。定价驱动因素：<b>CGB国债曲线（平滑）+ 信用利差矩阵（稳定）+ 发行人调整（固定）。</b><br>
+只有底层基本面变化时估值才会变化。日间波动几个bp级别，价格随久期自然衰减。<br>
+可定制<b>周度估值频率</b>（而非日度），进一步平滑净值曲线。
+</div>
+
+<div class="tbl-wrap" id="tbl"></div>
+<div class="note" id="cnt">静态快照 2026-07-10</div>
+
+<script>
+(function(){
+var bonds = [{"n": "CINDBK 1.8 06/25/26", "isin": "HK0001161063", "iss": "中信银行(国际)有限公司", "rt": "A-", "scn": "央企金融", "sc": null, "cn": "中国香港特别行政区", "dt": "2025-06-26", "md": "06/25/26", "mt": 0.0, "fy": 2.697, "fp": null, "ig": null}, {"n": "BCHINA 0 09/24/26", "isin": "HK0001241634", "iss": "中国银行股份有限公司香港分行", "rt": "A+", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2025-12-22", "md": "09/24/26", "mt": 0.2, "fy": 2.787, "fp": null, "ig": null}, {"n": "QXUDI 7.5 09/24/26", "isin": "XS3190751860", "iss": "杞县城市发展投资有限公司", "rt": "NR", "scn": "其他", "sc": null, "cn": "中国大陆", "dt": "2025-09-23", "md": "09/24/26", "mt": 0.2, "fy": 2.915, "fp": null, "ig": null}, {"n": "SXTOUR 4.8 10/30/26", "isin": "HK0000958642", "iss": "陕西旅游集团有限公司", "rt": "NR", "scn": "其他", "sc": null, "cn": "中国大陆", "dt": "2023-10-18", "md": "10/30/26", "mt": 0.3, "fy": 2.962, "fp": null, "ig": null}, {"n": "BCHINA 0 11/10/26", "isin": "XS2940283315", "iss": "中国银行(澳门)股份有限公司", "rt": "NR", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2024-11-08", "md": "11/10/26", "mt": 0.3, "fy": 2.972, "fp": null, "ig": null}, {"n": "HFHHK 0 10/08/26", "isin": "XS2721420417", "iss": "华泰国际金融控股有限公司", "rt": "BBB+", "scn": "央企金融", "sc": null, "cn": "中国香港特别行政区", "dt": "2023-11-15", "md": "10/08/26", "mt": 0.2, "fy": 2.987, "fp": null, "ig": null}, {"n": "WSHJIN 8 11/13/26", "isin": "XS3218101361", "iss": "尉氏县兴尉城市投资有限公司", "rt": "NR", "scn": "其他", "sc": null, "cn": "中国大陆", "dt": "2025-11-14", "md": "11/13/26", "mt": 0.3, "fy": 2.995, "fp": null, "ig": null}, {"n": "CCAMCL 1.8 11/27/26", "isin": "HK0001306601", "iss": "China Cinda Finance (2014) Ltd", "rt": "NR", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2026-05-21", "md": "11/27/26", "mt": 0.4, "fy": 3.013, "fp": null, "ig": null}, {"n": "CCBINT 1.66 09/16/26", "isin": "XS3409571562", "iss": "建银国际(控股)有限公司", "rt": "A", "scn": "央企金融", "sc": null, "cn": "中国香港特别行政区", "dt": "2026-06-09", "md": "09/16/26", "mt": 0.2, "fy": 3.037, "fp": null, "ig": null}, {"n": "CCAMCL 1.85 11/12/26", "isin": "HK0001302576", "iss": "中国信达(香港)控股有限公司", "rt": "A-", "scn": "央企金融", "sc": null, "cn": "中国香港特别行政区", "dt": "2026-05-11", "md": "11/12/26", "mt": 0.3, "fy": 3.075, "fp": null, "ig": null}, {"n": "CSCIF 0 07/17/26", "isin": "XS2865534940", "iss": "中信建投(国际)金融控股有限公司", "rt": "BBB+", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2024-07-12", "md": "07/17/26", "mt": 0.0, "fy": 3.077, "fp": null, "ig": null}, {"n": "BCHINA FLOAT 02/02/27", "isin": "XS2757893487", "iss": "中国银行(澳门)股份有限公司", "rt": "NR", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2024-01-24", "md": "02/02/27", "mt": 0.6, "fy": 3.122, "fp": null, "ig": null}, {"n": "BJHAIG 3 01/13/27", "isin": "XS3273300395", "iss": "北京市海淀区国有资产投资集团有限公司", "rt": "NR", "scn": "其他", "sc": null, "cn": "中国大陆", "dt": "2026-01-14", "md": "01/13/27", "mt": 0.5, "fy": 3.133, "fp": null, "ig": null}, {"n": "BCHINA 5.3 05/28/27", "isin": "XS3085113754", "iss": "中国银行(澳门)股份有限公司", "rt": "NR", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2025-05-23", "md": "05/28/27", "mt": 0.9, "fy": 3.15, "fp": null, "ig": null}, {"n": "BCHINA FLOAT 06/02/27", "isin": "XS2833244358", "iss": "中国银行(澳门)股份有限公司", "rt": "NR", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2024-05-27", "md": "06/02/27", "mt": 0.9, "fy": 3.151, "fp": null, "ig": null}, {"n": "BCHINA FLOAT 06/08/27", "isin": "XS2837454904", "iss": "中国银行(澳门)股份有限公司", "rt": "NR", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2024-05-31", "md": "06/08/27", "mt": 0.9, "fy": 3.153, "fp": null, "ig": null}, {"n": "CSFCO 2.05 02/02/27", "isin": "HK0001256772", "iss": "中信建投(国际)金融控股有限公司", "rt": "BBB+", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2026-01-27", "md": "02/02/27", "mt": 0.6, "fy": 3.3, "fp": null, "ig": null}, {"n": "GFGCHK 2.2 01/26/27", "isin": "HK0001256178", "iss": "广发控股(香港)有限公司", "rt": "BBB", "scn": "央企金融", "sc": null, "cn": "中国香港特别行政区", "dt": "2026-01-22", "md": "01/26/27", "mt": 0.5, "fy": 3.449, "fp": null, "ig": null}, {"n": "XINHUZ 2 12/21/26", "isin": "XS3254943288", "iss": "Xinhu (oversea) 2017 Investmen", "rt": "NR", "scn": "地产", "sc": null, "cn": "中国大陆", "dt": "2025-12-22", "md": "12/21/26", "mt": 0.4, "fy": 3.726, "fp": null, "ig": null}, {"n": "ADIGL 0 08/14/26", "isin": "XS3149795836", "iss": "亚丁数科有限公司", "rt": "NR", "scn": "科技", "sc": null, "cn": "中国香港特别行政区", "dt": "2025-08-06", "md": "08/14/26", "mt": 0.1, "fy": 3.955, "fp": null, "ig": null}, {"n": "FRESHK 2.59 10/09/26", "isin": "XS3200019514", "iss": "远东宏信有限公司", "rt": "BBB-", "scn": "央企金融", "sc": null, "cn": "中国大陆", "dt": "2025-09-30", "md": "10/09/26", "mt": 0.2, "fy": 4.387, "fp": null, "ig": null}, {"n": "DXSECU 6.5 01/20/28", "isin": "XS2988876145", "iss": "东兴证券(香港)金融控股有限公司", "rt": "BBB-", "scn": "央企金融", "sc": null, "cn": "中国香港特别行政区", "dt": "2025-01-22", "md": "01/20/28", "mt": 1.5, "fy": 4.599, "fp": null, "ig": null}, {"n": "DXSECU 6.5 01/20/28", "isin": "XS2951344295", "iss": "东兴证券(香港)金融控股有限公司", "rt": "BBB-", "scn": "央企金融", "sc": null, "cn": "中国香港特别行政区", "dt": "2024-11-25", "md": "01/20/28", "mt": 1.5, "fy": 4.599, "fp": null, "ig": null}];
+
+document.getElementById('cnt').textContent = bonds.length + ' 只债券无市场报价（模型估值）';
+
+var fys = bonds.map(function(b){return b.fy;}).filter(function(v){return v;});
+if (fys.length > 0) {
+  fys.sort(function(a,b){return a-b;});
+  var med = fys[Math.floor(fys.length/2)];
+  document.getElementById('sum').innerHTML =
+    '<div><div class="v">'+bonds.length+'</div><div class="l">Funding Note 数量</div></div>'+
+    '<div><div class="v">'+med.toFixed(2)+'%</div><div class="l">Fair% 中位数</div></div>'+
+    '<div><div class="v">'+fys[0].toFixed(2)+'%</div><div class="l">最低 Fair%</div></div>'+
+    '<div><div class="v">'+fys[fys.length-1].toFixed(2)+'%</div><div class="l">最高 Fair%</div></div>';
+}
+
+var h = '<table><tr><th>Bond</th><th>ISIN</th><th>Issuer</th><th>Rating</th><th>Sector</th><th>MatDt</th><th>Maturity</th><th>Fair%</th><th>Fair$</th></tr>';
+for (var i=0; i<bonds.length; i++) {
+  var b = bonds[i];
+  var fy = b.fy ? b.fy.toFixed(3) : '--';
+  var fp = b.fp ? b.fp.toFixed(3) : '--';
+  h += '<tr><td>'+b.n+'</td><td>'+b.isin+'</td><td>'+b.iss+'</td><td>'+b.rt+'</td><td>'+b.scn+'</td><td>'+b.md+'</td><td>'+b.mt.toFixed(1)+'Y</td><td>'+fy+'</td><td>'+fp+'</td></tr>';
+}
+h += '</table>';
+document.getElementById('tbl').innerHTML = h;
+})();
+</script>
+</body>
+</html>
